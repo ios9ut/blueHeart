@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Trái tim hạt xanh nước biển 3D</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: black;
+        }
+        #info {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(0, 200, 255, 0.5);
+            font-size: 13px;
+            pointer-events: none;
+            letter-spacing: 2px;
+            font-family: Arial, sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">KÉO / VUỐT ĐỂ XOAY</div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ========== 1. SCENE / CAMERA / RENDERER ==========
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x000000);
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 0, 42);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        // ========== 2. ĐIỀU KHIỂN XOAY ==========
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.08;
+        controls.rotateSpeed = 0.9;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 1.2;
+        controls.enableZoom = true;
+        controls.enablePan = false;
+        controls.target.set(0, 0, 0);
+
+        // ========== 3. TẠO TRÁI TIM 3D (VỎ ĐẦY ĐỦ) ==========
+        // Nguyên lý:
+        //   - Mỗi mặt cắt ngang tại cao độ z là một đường trái tim 2D thu nhỏ.
+        //   - Hệ số co theo z dùng dạng (1 - z^2)^p với p nhỏ (0.28) để trái tim
+        //     phồng đều, không bị bóp nhọn ở hai cực.
+        //   - Lấy mẫu t theo độ dài cung (arc-length) để hạt phân bố đều trên
+        //     chu vi, tránh dồn về rãnh giữa của trái tim.
+        //   - z lấy đều trong [-1, 1] để tránh dồn hạt về hai cực.
+        //   - CHỈ đặt hạt trên bề mặt, không thêm hạt bên trong.
+
+        const particleCount = 22000;
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+
+        const heartScale = 0.75;
+        const heartDepth = 8.0;
+
+        // Đường trái tim 2D tham số
+        function heart2D(t) {
+            const x = 16 * Math.pow(Math.sin(t), 3);
+            const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+            return { x, y };
+        }
+
+        // ---- LUT theo độ dài cung ----
+        const LUT_SIZE = 3000;
+        const lut = [];
+        let totalArcLength = 0;
+        let prevX = null, prevY = null;
+
+        for (let i = 0; i <= LUT_SIZE; i++) {
+            const t = (i / LUT_SIZE) * Math.PI * 2;
+            const { x, y } = heart2D(t);
+            if (i > 0) {
+                const dx = x - prevX;
+                const dy = y - prevY;
+                totalArcLength += Math.sqrt(dx * dx + dy * dy);
+            }
+            lut.push({ t, x, y, arcLength: totalArcLength });
+            prevX = x;
+            prevY = y;
+        }
+
+        function sampleByArcLength(u) {
+            const targetLen = u * totalArcLength;
+            let lo = 0, hi = LUT_SIZE;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if (lut[mid].arcLength < targetLen) lo = mid + 1;
+                else hi = mid;
+            }
+            return lut[lo].t;
+        }
+
+        // ---- Sinh hạt trên bề mặt ----
+        let idx = 0;
+
+        while (idx < particleCount) {
+            // z đều trong [-1, 1]
+            const zNorm = Math.random() * 2 - 1;
+
+            // u đều trên chu vi (theo arc-length)
+            const u = Math.random();
+            const t = sampleByArcLength(u);
+
+            const { x, y } = heart2D(t);
+
+            // Hệ số co theo z: phồng đều, không bóp nhọn cực
+            const z2 = zNorm * zNorm;
+            const scaleFactor = Math.pow(1 - z2, 0.28);
+
+            // Tọa độ 3D
+            let px = x * heartScale * scaleFactor;
+            let py = (y * heartScale * scaleFactor) - 2.0;
+            let pz = zNorm * (heartDepth / 2);
+
+            // Nhiễu rất nhỏ để phá vỡ tính lặp
+            px += (Math.random() - 0.5) * 0.15;
+            py += (Math.random() - 0.5) * 0.15;
+            pz += (Math.random() - 0.5) * 0.15;
+
+            positions[idx * 3]     = px;
+            positions[idx * 3 + 1] = py;
+            positions[idx * 3 + 2] = pz;
+
+            // Màu xanh nước biển: sáng hơn ở rìa, dịu hơn ở giữa theo z
+            const depthBrightness = 1 - Math.abs(zNorm) * 0.35;
+            const edgeBrightness = 0.75 + 0.25 * scaleFactor;
+            const bright = depthBrightness * edgeBrightness;
+
+            colors[idx * 3]     = 0.0;
+            colors[idx * 3 + 1] = (0.55 + Math.random() * 0.35) * bright;
+            colors[idx * 3 + 2] = (0.85 + Math.random() * 0.15) * bright;
+
+            idx++;
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        // Texture hình tròn mờ
+        function createCircleTexture() {
+            const size = 64;
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+
+            const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            gradient.addColorStop(0.35, 'rgba(180, 240, 255, 0.9)');
+            gradient.addColorStop(0.7, 'rgba(0, 180, 255, 0.4)');
+            gradient.addColorStop(1, 'rgba(0, 100, 255, 0)');
+
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        const particleTexture = createCircleTexture();
+
+        const material = new THREE.PointsMaterial({
+            size: 0.42,
+            map: particleTexture,
+            vertexColors: true,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            sizeAttenuation: true,
+            opacity: 0.95
+        });
+
+        const heart = new THREE.Points(geometry, material);
+        scene.add(heart);
+
+        // ========== 4. RESIZE ==========
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // ========== 5. ANIMATION ==========
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
